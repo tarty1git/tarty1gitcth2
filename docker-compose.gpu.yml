@@ -1,0 +1,12 @@
+# NVIDIA GPU for Ollama. Needs the NVIDIA driver and the NVIDIA Container Toolkit on the host.
+# Turn on in .env: COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
+# (setup.sh does this when it finds a working GPU.)
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -1,0 +1,6 @@
+# Used by the 'caddy' service (COMPOSE_PROFILES=https). The domain comes from DOMAIN in .env.
+# Its DNS A/AAAA record must point at this server, and ports 80 and 443 must be open.
+# Caddy gets and renews the certificate itself, and forwards WebSockets (needed for streaming).
+{$DOMAIN} {
+	reverse_proxy open-webui:8080
+}

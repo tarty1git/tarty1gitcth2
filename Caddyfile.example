@@ -1,5 +1,0 @@
-# Copy to /etc/caddy/Caddyfile, replace the domain, then: sudo systemctl reload caddy
-# The domain's DNS A/AAAA record must point at this server, and ports 80 and 443 must be open.
-ai.yourdomain.com {
-	reverse_proxy 127.0.0.1:3000
-}

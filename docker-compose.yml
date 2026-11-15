@@ -1,40 +1,104 @@
-# Open WebUI in front of an Ollama instance running on the host.
+# Ollama (runs the LLM), Open WebUI (the chat interface) and, optionally, Caddy (HTTPS).
+# Everything runs in Docker. Settings live in .env (copy .env.example); setup.sh does it for you.
 #
-# Host networking is used on purpose:
-#   - Ollama can stay on its default 127.0.0.1:11434, which is never reachable from outside.
-#   - Open WebUI listens only on 127.0.0.1:3000, so people reach it only through
-#     the reverse proxy (Caddy) or a VPN. Ports Docker publishes (-p) skip UFW's
-#     rules, so publishing none avoids that trap.
-# Host networking needs plain Docker Engine on Linux. See the README for Docker Desktop.
+#   docker compose up -d                     start (the first start downloads the model)
+#   docker compose logs -f models            watch the model download
+#   docker compose exec ollama ollama pull llama3.1:8b    add a model
+#
+# Only Open WebUI publishes a port, and by default only on 127.0.0.1 of this machine.
+# Ollama has no login, so it publishes no port: only the other containers can reach it.
 name: open-webui
 
 services:
+  ollama:
+    image: ollama/ollama:${OLLAMA_VERSION:-latest}
+    container_name: ollama
+    restart: always
+    environment:
+      # How long a model stays loaded in memory after the last request.
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-5m}
+    volumes:
+      - ollama:/root/.ollama          # downloaded models
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  # One-shot job: downloads the models listed in MODELS, then exits.
+  # Runs again on every 'up'; models already downloaded are only checked for updates.
+  models:
+    image: ollama/ollama:${OLLAMA_VERSION:-latest}
+    container_name: ollama-models
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      MODELS: ${MODELS:-qwen2.5:7b}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for m in $$MODELS; do
+          echo "Pulling model $$m"
+          ollama pull "$$m" || { echo "ERROR: could not pull $$m"; exit 1; }
+        done
+        echo "All models ready: $$MODELS"
+
   open-webui:
-    image: ghcr.io/open-webui/open-webui:main
+    image: ghcr.io/open-webui/open-webui:${WEBUI_VERSION:-main}
     container_name: open-webui
     restart: always
-    network_mode: host
+    depends_on:
+      ollama:
+        condition: service_healthy
+    ports:
+      # 127.0.0.1 = this machine only. Set WEBUI_BIND=0.0.0.0 in .env to open it to
+      # the network (Docker-published ports skip UFW, so then your firewall won't block it).
+      - "${WEBUI_BIND:-127.0.0.1}:${WEBUI_PORT:-3000}:8080"
     environment:
-      HOST: 127.0.0.1
-      PORT: "3000"
       # Used only on the very first start. After that, the URL saved in
-      # Admin Settings > Connections wins.
-      OLLAMA_BASE_URL: http://127.0.0.1:11434
+      # Admin Settings > Connections wins (setup.sh repairs known-bad values).
+      OLLAMA_BASE_URL: http://ollama:11434
       # Every signed-in user sees every model. Without this, Open WebUI shows
       # models only to admins until you share each one in Admin Settings > Models.
       BYPASS_MODEL_ACCESS_CONTROL: "True"
       # Hide the built-in OpenAI connection (it has no key and only logs errors).
-      # First start only; change it later in Admin Settings > Connections.
       ENABLE_OPENAI_API: "False"
-      # Keep the session-signing key in the data volume. Otherwise every update
-      # creates a new key and logs everyone out.
+      # Keep the session-signing key in the data volume, so updates don't log everyone out.
       WEBUI_SECRET_KEY_FILE: /app/backend/data/.webui_secret_key
     volumes:
-      - open-webui:/app/backend/data
+      - open-webui:/app/backend/data  # accounts, chats, settings
+
+  # HTTPS for your team. Turn on with COMPOSE_PROFILES=https and DOMAIN=... in .env.
+  caddy:
+    image: caddy:2
+    container_name: caddy
+    restart: always
+    profiles: ["https"]
+    depends_on:
+      - open-webui
+    environment:
+      DOMAIN: ${DOMAIN:-}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data              # certificates
+      - caddy-config:/config
 
 volumes:
+  ollama:
+    name: ollama
   open-webui:
-    # Same volume as the plain `docker run -v open-webui:...` command, so existing
-    # accounts and chats carry over. setup.sh creates it; by hand: docker volume create open-webui
+    # Same name as earlier versions of these files and the plain 'docker run' command,
+    # so existing accounts and chats carry over.
     name: open-webui
-    external: true
+  caddy-data:
+    name: caddy-data
+  caddy-config:
+    name: caddy-config
