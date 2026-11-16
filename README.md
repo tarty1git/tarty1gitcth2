@@ -21,6 +21,40 @@ Open WebUI is published on `127.0.0.1:3000`, so only this machine can reach it u
 | `docker-compose.gpu.yml` / `docker-compose.amd.yml` | Add-ons that give Ollama an NVIDIA or AMD GPU. |
 | `.env.example` | All settings (models, port, HTTPS, GPU). Copied to `.env` on first run. |
 | `Caddyfile` | The HTTPS reverse-proxy config used by the `caddy` container. |
+| `Dockerfile` | Builds **one** self-contained image (Open WebUI + Ollama + the model). See [Single container](#single-container-dockerfile). |
+
+## Single container (Dockerfile)
+
+The simplest way to run it: one image with the chat interface, Ollama and the LLM built in.
+Nothing is downloaded when it starts, so it also runs offline, and you can copy the image to
+another machine.
+
+```bash
+docker build -t ai-chat .                                          # default model: qwen2.5:7b
+docker build -t ai-chat --build-arg MODELS="llama3.1:8b qwen2.5:7b" .   # or choose models
+
+docker run -d --name ai-chat --restart always \
+  -p 127.0.0.1:3000:8080 -v ai-chat-data:/app/backend/data ai-chat
+```
+
+Open <http://localhost:3000> and create the admin account straight away (the first sign-up
+becomes admin). Accounts and chats are kept in the `ai-chat-data` volume, so you can rebuild
+or replace the container without losing them.
+
+- **Image size:** about 3.5 GB (compressed) plus each model (qwen2.5:7b adds about 4.7 GB).
+- **Changing models:** rebuild with a different `MODELS`, then replace the container
+  (`docker rm -f ai-chat`, then the `docker run` again). Models you pull with
+  `docker exec ai-chat ollama pull <name>` are lost when the container is replaced, unless you
+  also mount a volume: `-v ai-chat-models:/root/.ollama` (it starts with the built-in models).
+- **NVIDIA GPU:** add `--gpus all` to `docker run` (needs the NVIDIA Container Toolkit, see [GPU](#gpu)).
+- **Moving it to another machine:** `docker save ai-chat | gzip > ai-chat.tar.gz`, copy the
+  file, then `docker load < ai-chat.tar.gz` there.
+- **Pin a version:** `--build-arg BASE_IMAGE=ghcr.io/open-webui/open-webui:v0.13.3-ollama`.
+- `-p 127.0.0.1:3000:8080` keeps it on this machine only. For your team, put it behind HTTPS
+  or a VPN (below). With `-p 3000:8080` it is open to the network, and UFW won't block it.
+
+Use the compose setup below instead when you want HTTPS built in, to swap models without
+rebuilding, or to keep Ollama and Open WebUI in separate containers.
 
 ## Quick start
 
@@ -181,5 +215,8 @@ Tested on Linux with Docker 29 and Compose v5, Ollama 0.40.16, Open WebUI 0.13.3
 - First sign-up becomes admin, and a second public sign-up is refused. The admin login survives `update.sh`.
 - Chat replies through the API and in a real browser, both directly and through Caddy over HTTPS (with a local certificate for `localhost`).
 - Ollama is not reachable from the host, and Open WebUI listens on `127.0.0.1` only.
+- Dockerfile: built with `qwen2.5:0.5b`. The container becomes healthy in about 30 s, the
+  first sign-up becomes admin, the model is listed and replies. It also starts and replies
+  with networking turned off (`--network none`). The admin login survives replacing the container.
 
 Not tested: NVIDIA/AMD GPUs, Docker Desktop on Mac/Windows, real Let's Encrypt certificates, and Tailscale.

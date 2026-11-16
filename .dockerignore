@@ -1,0 +1,2 @@
+# The Dockerfile needs nothing from this folder; keep the build context empty.
+*
